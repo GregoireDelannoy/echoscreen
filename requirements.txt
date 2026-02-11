@@ -1,0 +1,3 @@
+numpy>=2.4
+PyQt6>=6.10.2
+PyGObject>=3.54.5
