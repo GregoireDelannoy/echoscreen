@@ -3,114 +3,119 @@
 Unofficial Spacedesk client for Linux using PyQt6 and GStreamer
 """
 
-import sys
-import signal
-from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget
-from PyQt6.QtCore import Qt, QTimer
 import logging
 import argparse
+import queue
+
+import gi
+
+gi.require_version("Gtk", "3.0")
+gi.require_version("Gdk", "3.0")
+from gi.repository import Gtk
+from gi.repository import Gdk
 
 from video_decoder import VideoDecoder
-from qt_video_widget import VideoWidget
 from spacedesk_protocol import Streamer
 
 
-class QtApplicationWindow(QMainWindow):
+class GtkWindow:
+    WINDOW_TITLE = "UNOFFICIAL Linux Spacedesk client"
+
+    def __init__(self, width, height) -> None:
+        self.isFullScreen = False
+        Gtk.init(None)
+
+        self.window = Gtk.Window(type=Gtk.WindowType.TOPLEVEL)
+        self.window.connect("destroy", Gtk.main_quit)
+
+        self.window.set_name(self.WINDOW_TITLE)
+        self.window.set_default_size(width, height)
+
+        # 2. Create a drawing area where the video will render
+        self.draw_area = Gtk.DrawingArea()
+        self.window.add(self.draw_area)
+        self.window.show_all()
+
+    def get_draw_id(self):
+        return self.draw_area.get_window().get_xid()
+
+    def connect_events(self):
+        self.window.connect("key-press-event", self.on_key_press)
+
+    def start(self):
+        self.connect_events()
+        Gtk.main()
+
+    def stop(self):
+        Gtk.main_quit()
+
+    def on_key_press(self, _, event):
+        keyname = Gdk.keyval_name(event.keyval)
+        print(f"Keyname: {keyname}")
+        if keyname in ("F11", "f"):
+            if self.isFullScreen:
+                self.window.unfullscreen()
+                self.isFullScreen = False
+            else:
+                self.window.fullscreen()
+                self.isFullScreen = True
+        elif keyname == "Escape":
+            if self.isFullScreen:
+                self.window.unfullscreen()
+                self.isFullScreen = False
+            else:
+                self.stop()
+        elif keyname == "q":
+            self.stop()
+
+
+class Application:
     def __init__(self, args):
-        super().__init__()
         self.args = args
-        self.setWindowTitle("UNOFFICIAL Linux Spacedesk client")
-        self.setGeometry(100, 100, int(self.args.width / 2), int(self.args.height / 2))
+        self.raw_frames_queue = queue.Queue(maxsize=50)
 
-        central = QWidget()
-        self.setCentralWidget(central)
-        layout = QVBoxLayout()
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
-        self.decoder = VideoDecoder(width=args.width, height=args.height)
+        self.window = GtkWindow(int(self.args.width / 2), int(self.args.height / 2))
+        xid = self.window.get_draw_id()
+        self.decoder = VideoDecoder(
+            xid, self.raw_frames_queue, self.args.width, self.args.height
+        )
         self.streamer = Streamer(
-            host=args.host,
-            port=args.port,
-            width=args.width,
-            height=args.height,
-            quality=args.quality,
+            self.decoder.push_data,
+            self.args.host,
+            self.args.port,
+            self.args.width,
+            self.args.height,
+            self.args.quality,
         )
 
-        self.display = VideoWidget()
-        layout.addWidget(self.display)
+    def start(self):
+        try:
+            self.decoder.start()
+            self.streamer.start()
+            self.window.start()
+        except KeyboardInterrupt:
+            logging.info("Keyboard interrrupt, closing connections")
+        except Exception as e:
+            logging.error(f"Runtime error: {e}")
+        finally:
+            self.stop()
 
-        central.setLayout(layout)
-
-        # Start immediately
-        QTimer.singleShot(1, self.start_streaming)
-
-    def on_frame_ready(self, frame, width, height):
-        self.display.display_frame(frame, width, height)
-        if self.decoder:
-            self.decoder.return_frame_to_pool(frame)
-
-    def on_video_data(self, data):
-        if self.decoder:
-            self.decoder.feed_data(data)
-
-    def start_streaming(self):
-        # Connect thread signals and start both decoder and streamer threads
-        self.decoder.rgb_frame_signal.connect(
-            self.on_frame_ready, Qt.ConnectionType.QueuedConnection
-        )
-
-        self.decoder.start()
-
-        self.streamer.video_data_signal.connect(
-            self.on_video_data, Qt.ConnectionType.QueuedConnection
-        )
-
-        self.streamer.start()
-
-    def stop_streaming(self):
+    def stop(self):
         if self.decoder:
             self.decoder.stop()
             self.decoder = None
         if self.streamer:
             self.streamer.stop()
             self.streamer = None
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-
-        if self.display and self.display.pixmap:
-            self.display.draw()
-
-    def closeEvent(self, event):
-        self.stop_streaming()
-        event.accept()
-
-    def keyPressEvent(self, event):
-        if event.key() in (Qt.Key.Key_F11, Qt.Key.Key_F):
-            if self.isFullScreen():
-                self.showNormal()
-            else:
-                self.showFullScreen()
-            event.accept()
-        elif event.key() == Qt.Key.Key_Escape:
-            # Exit full screen or close app
-            if self.isFullScreen():
-                self.showNormal()
-            else:
-                self.close()
-            event.accept()
-        elif event.key() == Qt.Key.Key_Q:
-            self.close()
-            event.accept()
-        else:
-            super().keyPressEvent(event)
+        self.window.stop()
 
 
-def get_screen_dimensions(app):
-    screen = app.primaryScreen()
-    geometry = screen.geometry()
-    return geometry.width(), geometry.height()
+def get_screen_dimensions():
+    display = Gdk.Display.get_default()
+    monitor = display.get_primary_monitor()
+    scale_factor = monitor.get_scale_factor()
+    geometry = monitor.get_geometry()
+    return geometry.width * scale_factor, geometry.height * scale_factor
 
 
 def parse_resolution(resolution_str):
@@ -129,8 +134,8 @@ def parse_resolution(resolution_str):
         )
 
 
-def parse_arguments(app):
-    default_width, default_height = get_screen_dimensions(app)
+def parse_arguments():
+    default_width, default_height = get_screen_dimensions()
     default_resolution = f"{default_width}x{default_height}"
 
     parser = argparse.ArgumentParser(
@@ -154,6 +159,16 @@ def parse_arguments(app):
         help="Screen resolution in format WIDTHxHEIGHT (e.g., 1920x1080)",
     )
 
+    # parser.add_argument(
+    #     "-f",
+    #     "--framerate",
+    #     type=int,
+    #     default=60,
+    #     choices=[30,60,120],
+    #     metavar="[30,60,120]",
+    #     help="Framerate, frames per second",
+    # )
+
     parser.add_argument(
         "-q",
         "--quality",
@@ -174,45 +189,19 @@ def parse_arguments(app):
     return args
 
 
-def setup_interrupt_handling(app, window):
-    def signal_handler(sig, frame):
-        logging.info("\nKeyboard interrupt received (Ctrl+C)")
-        logging.info("Shutting down application...")
-
-        window.stop_streaming()
-
-        app.quit()
-
-    signal.signal(signal.SIGINT, signal_handler)
-
-    # Create a timer to allow Python to process signals
-    # This is crucial - without it, Ctrl+C won't work!
-    timer = QTimer()
-    timer.timeout.connect(lambda: None)  # No-op to process events
-    timer.start(500)  # Check every 500ms
-
-    return timer
-
-
 def main():
-    app = QApplication(sys.argv)
-    args = parse_arguments(app)
+    args = parse_arguments()
+    app = Application(args)
 
     logging.basicConfig(
         level=logging.DEBUG if args.debug else logging.INFO,
     )
 
-    window = QtApplicationWindow(args)
-
-    # Setup keyboard interrupt handling
-    # Keep timer reference to prevent garbage collection
-    interrupt_timer = setup_interrupt_handling(app, window)
-
-    window.show()
     logging.info(
         "Use F11 or F to toggle full screen, ESC to exit full screen or close app, Q to quit."
     )
-    app.exec()
+
+    app.start()
 
 
 if __name__ == "__main__":

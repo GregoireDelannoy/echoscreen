@@ -4,7 +4,7 @@ import socket
 import select
 import hashlib
 import uuid
-from PyQt6.QtCore import QThread, pyqtSignal
+import threading
 
 
 def create_uuid_from_string(val: str):
@@ -133,14 +133,20 @@ def get_payload_size(data: bytes) -> int:
     return int.from_bytes(data[4:8], byteorder="little")
 
 
-class Streamer(QThread):
+class Streamer(threading.Thread):
     DEFAULT_SPACEDESK_PORT = 28252
-    video_data_signal = pyqtSignal(object)  # raw bytes
 
     def __init__(
-        self, host, port=DEFAULT_SPACEDESK_PORT, width=1920, height=1080, quality=100
+        self,
+        push_data_callback,
+        host,
+        port=DEFAULT_SPACEDESK_PORT,
+        width=1920,
+        height=1080,
+        quality=100,
     ):
         super().__init__()
+        self.push_data_callback = push_data_callback
         self.host = host
         self.port = port
         self.width = width
@@ -213,8 +219,7 @@ class Streamer(QThread):
                 payload_size = get_payload_size(received)
                 logging.debug(f"Received VIDEO_DATA. Payload size: {payload_size}")
                 full_payload = self.receive_size(payload_size)
-
-                self.video_data_signal.emit(full_payload)
+                self.push_data_callback(full_payload)
 
                 # Send Framebuffer Ack packet
                 ack_packet = VideoDataAckPacket()
