@@ -58,6 +58,12 @@ class DisconnectPacket(Packet):
         super().__init__()
         self.msg[0:4] = (PacketType.DISCONNECT).to_bytes(4, byteorder="little")
 
+class PongPacket(Packet):
+    def __init__(self):
+        super().__init__()
+        self.msg[0:4] = (PacketType.PING).to_bytes(4, byteorder="little")
+        # Ping response? Ping packet from server has a "1" here.
+        self.msg[12:16] = (2).to_bytes(4, byteorder="little")
 
 class ConnectionStartPacket(Packet):
     PAYLOAD_SIZE = 334
@@ -69,12 +75,15 @@ class ConnectionStartPacket(Packet):
 
         # Payload size. Don't know why 334 even though the payload is only identification string
         self.msg[4:8] = (self.PAYLOAD_SIZE).to_bytes(4, byteorder="little")
+
+        # Values copied from intercepted packet
         self.msg[8:12] = (4).to_bytes(4, byteorder="little")
         self.msg[12:16] = (8).to_bytes(4, byteorder="little")
         self.msg[16:20] = (0).to_bytes(4, byteorder="little")
         self.msg[20:24] = (1).to_bytes(4, byteorder="little")
         self.msg[24:28] = (3).to_bytes(4, byteorder="little")
         self.msg[28:32] = (2).to_bytes(4, byteorder="little")
+
         # Quality settings 0 - 100
         self.msg[32:36] = (quality).to_bytes(4, byteorder="little")
         self.msg[36:38] = (4).to_bytes(2, byteorder="little")  # Compression Type = H264
@@ -86,7 +95,7 @@ class ConnectionStartPacket(Packet):
         # Depends on operating system => 1 for Windows?
         self.msg[48:52] = (1).to_bytes(4, byteorder="little")
 
-        # This seems to be used for the resolution of the virtual display
+        # Virtual display resolution. Empty space = More than 1 screen?
         self.msg[52:56] = (width).to_bytes(4, byteorder="little")
         # 8 * 4 bytes of empty space
 
@@ -181,7 +190,7 @@ class Streamer(threading.Thread):
 
     def run(self):
         logging.info(
-            f"Connecting to spacedesk server at {self.host}:{self.port}with resolution {self.width}x{self.height} and quality {self.quality}"
+            f"Connecting to spacedesk server at {self.host}:{self.port} with resolution {self.width}x{self.height} and quality {self.quality}"
         )
         try:
             self.sock.connect((self.host, self.port))
@@ -204,15 +213,16 @@ class Streamer(threading.Thread):
             received = self.sock.recv(Packet.PACKET_SIZE)
             if not received:
                 logging.error(
-                    "Error receiving packet. Should not happen in normal network conditions."
+                    "Error receiving packet. Should not happen in normal network conditions. Happens when TCP stream is interrupted"
                 )
-                continue
+                raise Exception("Network error")
 
             received_packet_type = get_packet_type(received)
 
             if received_packet_type == PacketType.PING:
                 logging.info("Received Ping packet, sending Ping response")
-                self.sock.sendall(received)
+                pong_packet = PongPacket()
+                self.sock.sendall(pong_packet.get_bytes())
             elif received_packet_type == PacketType.CONNECTION_START:
                 logging.info("Received CONNECTION_START packet, ignoring")
             elif received_packet_type == PacketType.VIDEO_DATA:
