@@ -139,7 +139,7 @@ def parse_arguments():
     default_resolution = f"{default_width}x{default_height}"
 
     parser = argparse.ArgumentParser(
-        description="Unofficial Spacedesk client for Linux using PyQt6 and GStreamer",
+        description="Unofficial Spacedesk client for Linux",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
@@ -173,7 +173,7 @@ def parse_arguments():
         "-q",
         "--quality",
         type=int,
-        default=100,
+        default=90,
         choices=range(1, 101),
         metavar="[1-100]",
         help="Video quality (1-100)",
