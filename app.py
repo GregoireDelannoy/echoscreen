@@ -31,6 +31,10 @@ class GtkWindow:
         self.window.set_name(self.WINDOW_TITLE)
         self.window.set_default_size(width, height)
 
+        # Hide the mouse cursor
+        blank_cursor = Gdk.Cursor.new(Gdk.CursorType.BLANK_CURSOR)
+        self.window.get_root_window().set_cursor(blank_cursor)
+
         # 2. Create a drawing area where the video will render
         self.draw_area = Gtk.DrawingArea()
         self.window.add(self.draw_area)
