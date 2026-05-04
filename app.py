@@ -3,6 +3,10 @@
 Unofficial Spacedesk client for Linux using PyQt6 and GStreamer
 """
 
+# Force X11 backend, as our video rendering depends on it.
+import os
+os.environ["GDK_BACKEND"] = "x11"
+
 import logging
 import argparse
 import queue
@@ -55,7 +59,6 @@ class GtkWindow:
 
     def on_key_press(self, _, event):
         keyname = Gdk.keyval_name(event.keyval)
-        print(f"Keyname: {keyname}")
         if keyname in ("F11", "f"):
             if self.isFullScreen:
                 self.window.unfullscreen()
@@ -117,6 +120,13 @@ class Application:
 def get_screen_dimensions():
     display = Gdk.Display.get_default()
     monitor = display.get_primary_monitor()
+    if monitor is None:
+        logging.warning("No primary monitor defined. Use first monitor found for resolution")
+        monitor = display.get_monitor(0)
+
+    if monitor is None:
+        logging.warning("No monitor found. Use fallback resolution")
+        return 1024, 768
     scale_factor = monitor.get_scale_factor()
     geometry = monitor.get_geometry()
     return geometry.width * scale_factor, geometry.height * scale_factor
